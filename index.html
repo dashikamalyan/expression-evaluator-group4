@@ -1,933 +1,382 @@
 
-# ============================================================
-# GROUP 4 - EXPRESSION EVALUATOR
-# COMPLETE PROJECT WITH PROFESSIONAL GUI
-# ============================================================
-
-!pip -q install ipywidgets networkx matplotlib
-
-import re
-import math
-import html
-import ipywidgets as widgets
-import networkx as nx
-import matplotlib.pyplot as plt
-
-from collections import deque
-from IPython.display import display, HTML, clear_output
-
-
-# ============================================================
-# 1. EXPRESSION TOKENIZER
-# ============================================================
-
-OPERATORS = {"+", "-", "*", "/", "^"}
-
-PRECEDENCE = {
-    "+": 1, "-": 1,
-    "*": 2, "/": 2,
-    "u+": 3, "u-": 3,
-    "^": 4
-}
-
-RIGHT_ASSOC = {"^", "u+", "u-"}
-
-
-def tokenize(expression):
-
-    expression = expression.replace(" ", "")
-
-    if not expression:
-        raise ValueError("Please enter an expression.")
-
-    pattern = r"\d+(?:\.\d+)?|[()+\-*/^]"
-    tokens = re.findall(pattern, expression)
-
-    if "".join(tokens) != expression:
-        raise ValueError("Invalid characters in expression.")
-
-    result = []
-    previous = None
-
-    for token in tokens:
-
-        if token in {"+", "-"} and (
-            previous is None or
-            previous in OPERATORS or
-            previous in {"(", "u+", "u-"}
-        ):
-            token = "u" + token
-
-        result.append(token)
-        previous = token
-
-    balance = 0
-    expecting_operand = True
-
-    for token in result:
-
-        if re.fullmatch(r"\d+(?:\.\d+)?", token):
-
-            if not expecting_operand:
-                raise ValueError("Missing operator between numbers.")
-
-            expecting_operand = False
-
-        elif token == "(":
-
-            if not expecting_operand:
-                raise ValueError("Missing operator before parentheses.")
-
-            balance += 1
-            expecting_operand = True
-
-        elif token == ")":
-
-            if expecting_operand:
-                raise ValueError("Invalid or empty parentheses.")
-
-            balance -= 1
-
-            if balance < 0:
-                raise ValueError("Mismatched parentheses.")
-
-            expecting_operand = False
-
-        elif token in {"u+", "u-"}:
-
-            if not expecting_operand:
-                raise ValueError("Unexpected unary operator.")
-
-        elif token in OPERATORS:
-
-            if expecting_operand:
-                raise ValueError("Operator is missing an operand.")
-
-            expecting_operand = True
-
-    if balance != 0:
-        raise ValueError("Mismatched parentheses.")
-
-    if expecting_operand:
-        raise ValueError("Expression cannot end with an operator.")
-
-    return result
-
-
-# ============================================================
-# 2. INFIX TO POSTFIX CONVERSION
-# ============================================================
-
-def infix_to_postfix(expression):
-
-    input_queue = deque(tokenize(expression))
-    operator_stack = []
-    postfix = []
-    steps = []
-
-    while input_queue:
-
-        token = input_queue.popleft()
-
-        if re.fullmatch(r"\d+(?:\.\d+)?", token):
-
-            postfix.append(token)
-            action = "Add operand to postfix queue."
-
-        elif token == "(":
-
-            operator_stack.append(token)
-            action = "Push opening bracket into stack."
-
-        elif token == ")":
-
-            while operator_stack and operator_stack[-1] != "(":
-                postfix.append(operator_stack.pop())
-
-            if not operator_stack:
-                raise ValueError("Mismatched parentheses.")
-
-            operator_stack.pop()
-            action = "Pop operators until opening bracket."
-
-        else:
-
-            while operator_stack and operator_stack[-1] != "(":
-
-                top = operator_stack[-1]
-
-                higher = PRECEDENCE[top] > PRECEDENCE[token]
-
-                equal_left = (
-                    PRECEDENCE[top] == PRECEDENCE[token]
-                    and token not in RIGHT_ASSOC
-                )
-
-                if higher or equal_left:
-                    postfix.append(operator_stack.pop())
-                else:
-                    break
-
-            operator_stack.append(token)
-            action = "Push operator into stack."
-
-        steps.append({
-            "token": token,
-            "queue": list(input_queue),
-            "stack": operator_stack.copy(),
-            "postfix": postfix.copy(),
-            "action": action
-        })
-
-    while operator_stack:
-
-        op = operator_stack.pop()
-
-        if op == "(":
-            raise ValueError("Mismatched parentheses.")
-
-        postfix.append(op)
-
-        steps.append({
-            "token": "END",
-            "queue": [],
-            "stack": operator_stack.copy(),
-            "postfix": postfix.copy(),
-            "action": "Pop remaining operator."
-        })
-
-    return postfix, steps
-
-
-# ============================================================
-# 3. POSTFIX EVALUATION
-# ============================================================
-
-def evaluate_postfix(postfix):
-
-    stack = []
-    steps = []
-
-    for token in postfix:
-
-        if re.fullmatch(r"\d+(?:\.\d+)?", token):
-
-            stack.append(float(token))
-            action = f"Push {token} into stack."
-
-        elif token in {"u+", "u-"}:
-
-            if len(stack) < 1:
-                raise ValueError("Missing operand.")
-
-            a = stack.pop()
-            result = -a if token == "u-" else a
-
-            stack.append(result)
-            action = f"Apply {token} to {a:g}."
-
-        elif token in OPERATORS:
-
-            if len(stack) < 2:
-                raise ValueError("Invalid postfix expression.")
-
-            b = stack.pop()
-            a = stack.pop()
-
-            if token == "+":
-                result = a + b
-
-            elif token == "-":
-                result = a - b
-
-            elif token == "*":
-                result = a * b
-
-            elif token == "/":
-
-                if b == 0:
-                    raise ZeroDivisionError("Cannot divide by zero.")
-
-                result = a / b
-
-            elif token == "^":
-
-                if abs(b) > 10000:
-                    raise ValueError("Exponent is too large.")
-
-                result = a ** b
-
-            if isinstance(result, complex) or not math.isfinite(result):
-                raise ValueError("Result outside supported numeric range.")
-
-            stack.append(result)
-            action = f"{a:g} {token} {b:g} = {result:g}"
-
-        steps.append({
-            "token": token,
-            "stack": stack.copy(),
-            "action": action
-        })
-
-    if len(stack) != 1:
-        raise ValueError("Invalid expression.")
-
-    return stack[0], steps
-
-
-# ============================================================
-# 4. EXPRESSION TREE
-# ============================================================
-
-def create_expression_tree(postfix):
-
-    graph = nx.DiGraph()
-    node_stack = []
-    labels = {}
-    count = 0
-
-    for token in postfix:
-
-        node = count
-        count += 1
-
-        graph.add_node(node)
-        labels[node] = token
-
-        if token in OPERATORS:
-
-            if len(node_stack) < 2:
-                raise ValueError("Invalid expression tree.")
-
-            right = node_stack.pop()
-            left = node_stack.pop()
-
-            graph.add_edge(node, left)
-            graph.add_edge(node, right)
-
-        elif token in {"u-", "u+"}:
-
-            if not node_stack:
-                raise ValueError("Invalid expression tree.")
-
-            child = node_stack.pop()
-            graph.add_edge(node, child)
-
-        node_stack.append(node)
-
-    if len(node_stack) != 1:
-        raise ValueError("Invalid expression tree.")
-
-    positions = {}
-    leaf_counter = [0]
-
-    def arrange(node, depth=0):
-
-        children = list(graph.successors(node))
-
-        if not children:
-            x = leaf_counter[0]
-            leaf_counter[0] += 1
-
-        else:
-            child_x = [
-                arrange(child, depth + 1)
-                for child in children
-            ]
-
-            x = sum(child_x) / len(child_x)
-
-        positions[node] = (x, -depth)
-        return x
-
-    arrange(node_stack[0])
-
-    return graph, labels, positions
-
-
-# ============================================================
-# 5. PROFESSIONAL GUI DESIGN
-# ============================================================
-
-display(HTML("""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expression Evaluator | Group 4</title>
 <style>
-
-.evaluator-header {
-    background:linear-gradient(120deg,#102A43,#1D5686);
-    padding:30px 15px;
-    border-radius:18px;
-    text-align:center;
-    color:white;
-    margin-bottom:22px;
+:root {
+  --navy:#102b46; --blue:#1769aa; --light:#eef5fb;
+  --border:#d9e3ed; --ink:#203246; --muted:#65788b;
 }
-
-.evaluator-header h1 {
-    color:white;
-    font-size:30px;
-    font-weight:800;
-    margin:0;
+* { box-sizing:border-box; }
+body {
+  margin:0; background:#f2f6fa; color:var(--ink);
+  font-family:Arial,Helvetica,sans-serif;
 }
-
-.evaluator-header p {
-    color:#D9EAF7;
-    margin:8px;
+header {
+  background:linear-gradient(120deg,#102b46,#205b8c);
+  color:white; text-align:center; padding:34px 16px;
 }
-
-.section-heading {
-    color:#2471A3;
-    font-size:19px;
-    font-weight:800;
-    margin:22px 0 12px;
+header .symbol { font-size:42px; }
+header h1 { margin:8px 0; font-size:clamp(26px,4vw,38px); }
+header p { margin:8px 0; color:#dceafa; }
+header .tag { font-size:13px; letter-spacing:1px; margin-top:18px; }
+main { width:min(1120px,94%); margin:28px auto 50px; }
+.panel {
+  background:white; border:1px solid var(--border); border-radius:14px;
+  padding:22px; margin-bottom:20px; box-shadow:0 4px 15px #163b5b0b;
 }
-
-.result-panel {
-    background:#E6F7EC;
-    border:1px solid #A5D9B5;
-    border-radius:15px;
-    padding:22px;
-    color:#14532D;
-    text-align:center;
-    margin:15px 0;
+h2 { color:var(--navy); font-size:20px; margin:0 0 16px; }
+h3 { color:var(--navy); font-size:16px; margin:20px 0 10px; }
+label { display:block; font-weight:bold; margin:12px 0 7px; }
+input,select {
+  width:100%; padding:13px; border:1px solid #c7d4e0;
+  border-radius:8px; font-size:16px; background:white; color:var(--ink);
 }
-
-.postfix-panel {
-    background:#EAF2FF;
-    border:1px solid #B8D1F4;
-    border-radius:15px;
-    padding:18px;
-    color:#174477;
-    margin:12px 0;
+input:focus,select:focus { outline:2px solid #9bc9f0; border-color:var(--blue); }
+.actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+button {
+  border:0; border-radius:8px; padding:12px 19px; cursor:pointer;
+  font-weight:bold; font-size:14px;
 }
-
-.data-table {
-    width:100%;
-    border-collapse:collapse;
-    font-size:13px;
-    margin:12px 0;
+.primary { background:var(--blue); color:white; }
+.secondary { background:#e8f0f7; color:var(--navy); }
+button:hover { filter:brightness(.96); }
+.hint { color:var(--muted); font-size:13px; line-height:1.5; }
+.error { color:#b42318; background:#fff0ee; padding:12px; border-radius:8px; margin-top:14px; }
+.result {
+  background:#eaf5ff; border-left:4px solid var(--blue);
+  border-radius:8px; padding:16px; margin-top:16px;
 }
-
-.data-table th {
-    background:#173B63;
-    color:white;
-    padding:12px;
-    text-align:left;
+.result strong { color:var(--navy); }
+.result .answer { font-size:27px; font-weight:bold; color:#12613b; margin-top:6px; }
+.grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.table-wrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; font-size:13px; }
+th,td { border:1px solid var(--border); padding:9px; text-align:left; }
+th { background:#eaf1f8; color:var(--navy); }
+tbody tr:nth-child(even) { background:#f8fafc; }
+.pills { display:flex; flex-wrap:wrap; gap:7px; }
+.pill {
+  padding:8px 11px; border-radius:7px; background:#e9f2fb;
+  border:1px solid #d1e1f0; font-family:monospace;
 }
-
-.data-table td {
-    padding:10px;
-    border:1px solid #DCE5EF;
-    color:#263B50;
+.visual {
+  min-height:60px; background:#f7f9fc; border:1px dashed #c7d4e0;
+  border-radius:9px; padding:12px; overflow-x:auto;
 }
-
-.data-table tr:nth-child(even) {
-    background:#F1F5F9;
+#tree { width:100%; min-height:160px; }
+.empty { color:var(--muted); font-size:13px; }
+footer { text-align:center; padding:22px; color:var(--muted); font-size:13px; }
+@media(max-width:700px) {
+  .grid { grid-template-columns:1fr; }
+  .panel { padding:16px; }
 }
-
-.metric-card {
-    background:#EDF3FA;
-    padding:15px;
-    border-radius:12px;
-    text-align:center;
-    color:#173B63;
-    flex:1;
-}
-
-.metric-card h2 {
-    margin:5px;
-    color:#2471A3;
-}
-
 </style>
-"""))
+</head>
+<body>
+<header>
+  <div class="symbol">∑</div>
+  <h1>EXPRESSION EVALUATOR</h1>
+  <p>INFIX → POSTFIX CONVERSION &amp; EVALUATION</p>
+  <p><strong>GROUP 4 | DATA STRUCTURES PROJECT</strong></p>
+  <div class="tag">STACK • QUEUE • EXPRESSION TREE • JAVASCRIPT</div>
+</header>
 
-
-# ============================================================
-# 6. HEADER
-# ============================================================
-
-display(HTML("""
-<div class="evaluator-header">
-    <div style="font-size:42px;">∑</div>
-    <h1>EXPRESSION EVALUATOR</h1>
-    <p>INFIX → POSTFIX CONVERSION & EVALUATION</p>
-    <p><b>GROUP 4 | DATA STRUCTURES PROJECT</b></p>
-    <div style="margin-top:15px;font-size:12px;">
-        STACK • QUEUE • EXPRESSION TREE • PYTHON
+<main>
+  <section class="panel">
+    <h2>01. Enter your mathematical expression</h2>
+    <label for="expression">Infix expression</label>
+    <input id="expression" type="text" placeholder="Example: (5+3)*2" autocomplete="off">
+    <label for="examples">Try an example</label>
+    <select id="examples">
+      <option value="">Choose an example...</option>
+      <option value="(5+3)*2">(5 + 3) * 2</option>
+      <option value="10+2*6">10 + 2 * 6</option>
+      <option value="(8-3)^2">(8 - 3) ^ 2</option>
+      <option value="20/(2+3)">20 / (2 + 3)</option>
+      <option value="3+4*2/(1-5)^2">3 + 4 * 2 / (1 - 5) ^ 2</option>
+      <option value="-2^2">-2 ^ 2</option>
+      <option value="2^-2">2 ^ -2</option>
+    </select>
+    <div class="actions">
+      <button class="primary" id="calculate">Convert &amp; Evaluate</button>
+      <button class="secondary" id="reset">Reset</button>
     </div>
-</div>
-"""))
-
-
-# ============================================================
-# 7. INPUT SECTION
-# ============================================================
-
-display(HTML("""
-<div class="section-heading">
-01. ENTER YOUR MATHEMATICAL EXPRESSION
-</div>
-"""))
-
-expression_input = widgets.Text(
-    value="",
-    placeholder="Enter expression e.g. (5+3)*2",
-    description="",
-    layout=widgets.Layout(width="100%", height="48px")
-)
-
-example_select = widgets.Dropdown(
-    options=[
-        ("Choose example", ""),
-        ("(5+3)*2", "(5+3)*2"),
-        ("10+2*6", "10+2*6"),
-        ("(8-2)/3", "(8-2)/3"),
-        ("2^3^2", "2^3^2"),
-        ("-5+2", "-5+2"),
-        ("(12+8)/(2*5)", "(12+8)/(2*5)")
-    ],
-    value="",
-    description="Examples:",
-    layout=widgets.Layout(width="100%")
-)
-
-load_button = widgets.Button(
-    description="LOAD EXAMPLE",
-    icon="download",
-    button_style="info",
-    layout=widgets.Layout(width="100%", height="42px")
-)
-
-
-# ============================================================
-# 8. AUTOMATIC EXAMPLE LOADING - FIXED
-# ============================================================
-
-def load_example(change=None):
-
-    selected = example_select.value
-
-    if selected:
-        expression_input.value = selected
-
-
-# Automatically fill input when dropdown selection changes
-example_select.observe(load_example, names="value")
-
-# Also allow manual loading with button
-load_button.on_click(load_example)
-
-
-display(expression_input)
-display(example_select)
-display(load_button)
-
-display(HTML("""
-<p style="color:#718096;font-size:12px;">
-Supported operators: + &nbsp; - &nbsp; * &nbsp; / &nbsp; ^
-&nbsp; ( &nbsp; )
-</p>
-"""))
-
-
-# ============================================================
-# 9. BUTTONS AND OUTPUT
-# ============================================================
-
-evaluate_button = widgets.Button(
-    description="⚡ CONVERT & EVALUATE",
-    button_style="success",
-    layout=widgets.Layout(width="100%", height="50px")
-)
-
-reset_button = widgets.Button(
-    description="RESET",
-    icon="refresh",
-    button_style="warning",
-    layout=widgets.Layout(width="150px", height="42px")
-)
-
-output_area = widgets.Output()
-
-display(widgets.HBox(
-    [evaluate_button, reset_button],
-    layout=widgets.Layout(width="100%")
-))
-
-display(output_area)
-
-
-# ============================================================
-# 10. TABLE FUNCTION
-# ============================================================
-
-def show_table(headers, rows):
-
-    result = "<table class='data-table'><tr>"
-
-    for header in headers:
-        result += f"<th>{html.escape(str(header))}</th>"
-
-    result += "</tr>"
-
-    for row in rows:
-
-        result += "<tr>"
-
-        for value in row:
-            result += "<td>" + html.escape(str(value)) + "</td>"
-
-        result += "</tr>"
-
-    result += "</table>"
-
-    display(HTML(result))
-
-
-# ============================================================
-# 11. STACK VISUALIZATION
-# ============================================================
-
-def visualize_stack(steps):
-
-    if not steps:
-        return
-
-    snapshots = [step["stack"] for step in steps]
-
-    max_height = max(max(len(s) for s in snapshots), 1)
-
-    fig, ax = plt.subplots(figsize=(10, 3.5))
-
-    for i, values in enumerate(snapshots):
-
-        x = i * 1.25
-
-        for j, value in enumerate(values):
-
-            rect = plt.Rectangle(
-                (x, j), 0.95, 0.8,
-                facecolor="#CDE5FA",
-                edgecolor="#24558A",
-                linewidth=2
-            )
-
-            ax.add_patch(rect)
-
-            ax.text(
-                x + 0.475, j + 0.4,
-                f"{value:g}",
-                ha="center",
-                va="center",
-                fontweight="bold",
-                color="#173B63"
-            )
-
-        ax.text(
-            x + 0.475, -0.4,
-            str(i + 1),
-            ha="center",
-            fontsize=9
-        )
-
-    ax.set_xlim(-0.2, len(snapshots) * 1.25)
-    ax.set_ylim(-0.8, max_height + 0.6)
-    ax.set_title("STACK STATE AFTER EACH TOKEN", fontweight="bold")
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_frame_on(False)
-
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# 12. QUEUE VISUALIZATION
-# ============================================================
-
-def visualize_queue(steps):
-
-    if not steps:
-        return
-
-    initial_queue = steps[0]["queue"].copy()
-    initial_queue.insert(0, steps[0]["token"])
-
-    fig, ax = plt.subplots(figsize=(10, 2.5))
-
-    for i, token in enumerate(initial_queue):
-
-        rect = plt.Rectangle(
-            (i * 1.25, 0), 1, 0.65,
-            facecolor="#D9F2E6",
-            edgecolor="#26845A",
-            linewidth=2
-        )
-
-        ax.add_patch(rect)
-
-        ax.text(
-            i * 1.25 + 0.5, 0.32,
-            str(token),
-            ha="center",
-            va="center",
-            fontweight="bold"
-        )
-
-    ax.set_xlim(-0.3, max(len(initial_queue), 1) * 1.25)
-    ax.set_ylim(-0.5, 1.2)
-    ax.set_title("INPUT QUEUE - INITIAL TOKENS", fontweight="bold")
-    ax.axis("off")
-
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# 13. EXPRESSION TREE VISUALIZATION
-# ============================================================
-
-def visualize_tree(postfix):
-
-    G, labels, positions = create_expression_tree(postfix)
-
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-
-    nx.draw_networkx_edges(
-        G, positions,
-        ax=ax,
-        edge_color="#829BB7",
-        width=2,
-        arrows=False
-    )
-
-    nx.draw_networkx_nodes(
-        G, positions,
-        ax=ax,
-        node_size=2000,
-        node_color="#D5E9FA",
-        edgecolors="#24558A",
-        linewidths=2
-    )
-
-    nx.draw_networkx_labels(
-        G, positions,
-        labels=labels,
-        ax=ax,
-        font_size=13,
-        font_weight="bold"
-    )
-
-    ax.set_title("MATHEMATICAL EXPRESSION TREE", fontweight="bold")
-    ax.axis("off")
-
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# 14. MAIN EVALUATION FUNCTION
-# ============================================================
-
-def run_evaluator(button=None):
-
-    with output_area:
-
-        clear_output(wait=True)
-
-        try:
-
-            expression = expression_input.value.strip()
-
-            if not expression:
-                raise ValueError("Please enter an expression first.")
-
-            postfix, conversion_steps = infix_to_postfix(expression)
-
-            answer, evaluation_steps = evaluate_postfix(postfix)
-
-            # RESULT CARDS
-
-            display(HTML(f"""
-            <div class="postfix-panel">
-                <b>INFIX EXPRESSION</b>
-                <h2>{html.escape(expression)}</h2>
-            </div>
-
-            <div class="postfix-panel">
-                <b>POSTFIX EXPRESSION</b>
-                <h2>{html.escape(' '.join(postfix))}</h2>
-            </div>
-
-            <div class="result-panel">
-                <b>✓ CALCULATION SUCCESSFUL</b>
-                <p>YOUR FINAL ANSWER</p>
-                <div style="font-size:42px;font-weight:800;">
-                    {answer:g}
-                </div>
-            </div>
-            """))
-
-            # METRICS
-
-            display(HTML(f"""
-            <div style="display:flex;gap:10px;margin:15px 0;">
-                <div class="metric-card">
-                    <small>POSTFIX TOKENS</small>
-                    <h2>{len(postfix)}</h2>
-                </div>
-                <div class="metric-card">
-                    <small>CONVERSION STEPS</small>
-                    <h2>{len(conversion_steps)}</h2>
-                </div>
-                <div class="metric-card">
-                    <small>EVALUATION STEPS</small>
-                    <h2>{len(evaluation_steps)}</h2>
-                </div>
-            </div>
-            """))
-
-            # CONVERSION TABLE
-
-            display(HTML("""
-            <div class="section-heading">
-            02. INFIX TO POSTFIX CONVERSION
-            </div>
-            """))
-
-            conversion_rows = []
-
-            for step in conversion_steps:
-
-                conversion_rows.append([
-                    step["token"],
-                    " ".join(step["queue"]) or "Empty",
-                    " ".join(step["stack"]) or "Empty",
-                    " ".join(step["postfix"]) or "Empty",
-                    step["action"]
-                ])
-
-            show_table(
-                ["Token", "Input Queue", "Operator Stack",
-                 "Postfix", "Operation"],
-                conversion_rows
-            )
-
-            # EVALUATION TABLE
-
-            display(HTML("""
-            <div class="section-heading">
-            03. POSTFIX EVALUATION USING STACK
-            </div>
-            """))
-
-            evaluation_rows = []
-
-            for step in evaluation_steps:
-
-                evaluation_rows.append([
-                    step["token"],
-                    str([round(x, 5) for x in step["stack"]]),
-                    step["action"]
-                ])
-
-            show_table(
-                ["Token", "Value Stack", "Operation"],
-                evaluation_rows
-            )
-
-            # QUEUE GRAPH
-
-            display(HTML("""
-            <div class="section-heading">
-            04. QUEUE VISUALIZATION
-            </div>
-            """))
-
-            visualize_queue(conversion_steps)
-
-            # STACK GRAPH
-
-            display(HTML("""
-            <div class="section-heading">
-            05. STACK VISUALIZATION
-            </div>
-            """))
-
-            visualize_stack(evaluation_steps)
-
-            # EXPRESSION TREE
-
-            display(HTML("""
-            <div class="section-heading">
-            06. EXPRESSION TREE
-            </div>
-            """))
-
-            visualize_tree(postfix)
-
-            display(HTML("""
-            <div style="
-                background:#173B63;
-                color:white;
-                padding:20px;
-                border-radius:12px;
-                text-align:center;
-                margin-top:20px;">
-                <b>GROUP 4 - EXPRESSION EVALUATOR</b>
-                <p style="color:#D6E7F8;font-size:12px;">
-                    Python | Stack | Queue | NetworkX
-                </p>
-            </div>
-            """))
-
-        except Exception as error:
-
-            display(HTML(f"""
-            <div style="
-                background:#FDECEC;
-                color:#991B1B;
-                padding:20px;
-                border-radius:12px;
-                margin:15px 0;">
-                <h3>⚠ Invalid Expression</h3>
-                {html.escape(str(error))}
-            </div>
-            """))
-
-
-# ============================================================
-# 15. RESET FUNCTION
-# ============================================================
-
-def reset_application(button):
-
-    expression_input.value = ""
-    example_select.value = ""
-
-    with output_area:
-        clear_output(wait=True)
-
-
-# ============================================================
-# 16. CONNECT BUTTONS
-# ============================================================
-
-evaluate_button.on_click(run_evaluator)
-reset_button.on_click(reset_application)
-expression_input.on_submit(run_evaluator)
-
-
-# ============================================================
-# 17. APPLICATION READY
-# ============================================================
-
-display(HTML("""
-<div style="text-align:center;color:#718096;
-font-size:12px;padding:15px;">
-Enter an expression and press ENTER or click
-CONVERT & EVALUATE.
-</div>
-"""))
-
-
-              
+    <p class="hint">Supported operators: +, -, *, /, ^ and parentheses. Decimal numbers and unary signs are supported.</p>
+    <div id="message" aria-live="polite"></div>
+    <div id="answer"></div>
+  </section>
+
+  <section class="panel">
+    <h2>02. Infix to Postfix Conversion</h2>
+    <p class="hint">The input queue is processed using an operator stack to produce the postfix expression.</p>
+    <div class="grid">
+      <div><h3>Input Queue</h3><div id="queue" class="visual empty">Run an expression to see the queue.</div></div>
+      <div><h3>Operator Stack</h3><div id="opstack" class="visual empty">Stack will appear here.</div></div>
+    </div>
+    <h3>Conversion steps</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Token</th><th>Queue remaining</th><th>Stack</th><th>Postfix</th><th>Action</th></tr></thead>
+        <tbody id="conversionRows"><tr><td colspan="6">No conversion yet.</td></tr></tbody>
+      </table>
+    </div>
+    <h3>Postfix expression</h3>
+    <div id="postfix" class="visual empty">Postfix output will appear here.</div>
+  </section>
+
+  <section class="panel">
+    <h2>03. Postfix Evaluation</h2>
+    <p class="hint">Each operand is pushed onto the evaluation stack. Operators pop operands, perform the operation, and push the result.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Step</th><th>Token</th><th>Stack</th><th>Action</th></tr></thead>
+        <tbody id="evaluationRows"><tr><td colspan="4">No evaluation yet.</td></tr></tbody>
+      </table>
+    </div>
+    <h3>Final Evaluation Stack</h3>
+    <div id="evalStack" class="visual empty">Evaluation stack will appear here.</div>
+  </section>
+
+  <section class="panel">
+    <h2>04. Expression Tree</h2>
+    <p class="hint">The expression tree represents operands as leaves and operators as parent nodes.</p>
+    <div id="tree" class="visual empty">The expression tree will appear here.</div>
+  </section>
+</main>
+<footer>GROUP 4 • DATA STRUCTURES PROJECT • EXPRESSION EVALUATOR</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+let lastResult = null;
+
+function tokenize(source) {
+  const text = source.replace(/\s+/g, "");
+  if (!text) throw Error("Please enter an expression.");
+  const tokens = text.match(/\d+(?:\.\d*)?|\.\d+|[+\-*/^()]|./g) || [];
+  if (tokens.join("") !== text) throw Error("Invalid characters in expression.");
+
+  let previous = "start";
+  const output = [];
+  for (const token of tokens) {
+    if (/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(token)) {
+      if (previous === "number" || previous === ")") throw Error("Missing operator between values.");
+      output.push(token); previous = "number";
+    } else if (token === "(") {
+      if (previous === "number" || previous === ")") throw Error("Missing operator before parenthesis.");
+      output.push(token); previous = "(";
+    } else if (token === ")") {
+      if (previous === "start" || previous === "operator" || previous === "(") throw Error("Invalid or empty parentheses.");
+      output.push(token); previous = ")";
+    } else {
+      if (previous === "start" || previous === "(" || previous === "operator") {
+        if (token !== "+" && token !== "-") throw Error("An operator is missing an operand.");
+        output.push(token === "+" ? "u+" : "u-");
+      } else {
+        output.push(token);
+      }
+      previous = "operator";
+    }
+  }
+  if (previous === "operator" || previous === "(") throw Error("Expression cannot end with an operator or opening parenthesis.");
+  return output;
+}
+
+const precedence = {"+":1,"-":1,"*":2,"/":2,"u+":3,"u-":3,"^":4};
+const rightAssociative = new Set(["^","u+","u-"]);
+const isOperator = t => Object.hasOwn(precedence,t);
+const isNumber = t => /^(\d+(\.\d*)?|\.\d+)$/.test(t);
+const show = arr => arr.length ? arr.join(" ") : "—";
+
+function convert(tokens) {
+  const queue = [...tokens], stack = [], output = [], steps = [];
+  const record = (token, action) => steps.push({
+    token, queue:[...queue], stack:[...stack], output:[...output], action
+  });
+
+  while (queue.length) {
+    const token = queue.shift();
+    if (isNumber(token)) {
+      output.push(token); record(token,"Add operand to postfix output.");
+    } else if (token === "(") {
+      stack.push(token); record(token,"Push opening parenthesis onto stack.");
+    } else if (token === ")") {
+      while (stack.length && stack[stack.length-1] !== "(") output.push(stack.pop());
+      if (!stack.length) throw Error("Mismatched parentheses.");
+      stack.pop(); record(token,"Pop operators until the opening parenthesis.");
+    } else if (isOperator(token)) {
+      while (stack.length && isOperator(stack[stack.length-1])) {
+        const top = stack[stack.length-1];
+        const shouldPop = rightAssociative.has(token)
+          ? precedence[top] > precedence[token]
+          : precedence[top] >= precedence[token];
+        if (!shouldPop) break;
+        output.push(stack.pop());
+      }
+      stack.push(token); record(token,"Push operator onto stack.");
+    }
+  }
+  while (stack.length) {
+    const op = stack.pop();
+    if (op === "(") throw Error("Mismatched parentheses.");
+    output.push(op); record(op,"Pop remaining operator onto postfix output.");
+  }
+  return {postfix:output,steps,finalStack:stack};
+}
+
+function evaluate(postfix) {
+  const stack = [], steps = [];
+  for (const token of postfix) {
+    if (isNumber(token)) {
+      stack.push(Number(token));
+      steps.push({token,stack:[...stack],action:"Push operand onto stack."});
+    } else if (token === "u+" || token === "u-") {
+      if (stack.length < 1) throw Error("Missing operand for unary operator.");
+      const a = stack.pop();
+      const result = token === "u-" ? -a : a;
+      stack.push(result);
+      steps.push({token,stack:[...stack],action:`Apply unary operator to ${a}.`});
+    } else {
+      if (stack.length < 2) throw Error("Invalid expression: missing operand.");
+      const b = stack.pop(), a = stack.pop();
+      let result;
+      if (token === "+") result = a+b;
+      if (token === "-") result = a-b;
+      if (token === "*") result = a*b;
+      if (token === "/") {
+        if (b === 0) throw Error("Cannot divide by zero.");
+        result = a/b;
+      }
+      if (token === "^") result = Math.pow(a,b);
+      if (!Number.isFinite(result)) throw Error("The result is not a finite number.");
+      stack.push(result);
+      steps.push({token,stack:[...stack],action:`Apply ${a} ${token} ${b} = ${result}.`});
+    }
+  }
+  if (stack.length !== 1) throw Error("Invalid expression.");
+  return {value:stack[0],steps,finalStack:stack};
+}
+
+function buildTree(postfix) {
+  const stack = [];
+  for (const token of postfix) {
+    if (isNumber(token)) stack.push({value:token,left:null,right:null});
+    else if (token === "u+" || token === "u-") {
+      if (!stack.length) throw Error("Invalid expression tree.");
+      stack.push({value:token,left:stack.pop(),right:null});
+    } else {
+      if (stack.length < 2) throw Error("Invalid expression tree.");
+      const right = stack.pop(), left = stack.pop();
+      stack.push({value:token,left,right});
+    }
+  }
+  if (stack.length !== 1) throw Error("Invalid expression tree.");
+  return stack[0];
+}
+
+function renderPills(id, values) {
+  $(id).classList.remove("empty");
+  $(id).innerHTML = values.length
+    ? values.map(v=>`<span class="pill">${escapeHTML(String(v))}</span>`).join("")
+    : '<span class="empty">Empty</span>';
+}
+function escapeHTML(value) {
+  return value.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function renderTree(root) {
+  const leaves = [];
+  function countLeaves(node) {
+    if (!node.left && !node.right) { node.x = leaves.length++; return; }
+    if (node.left) countLeaves(node.left);
+    if (node.right) countLeaves(node.right);
+    node.x = ((node.left?.x ?? node.right.x) + (node.right?.x ?? node.left.x))/2;
+  }
+  function depth(node) {
+    return 1 + Math.max(node.left ? depth(node.left):0,node.right ? depth(node.right):0);
+  }
+  countLeaves(root);
+  const width = Math.max(420, leaves.length*100+60), height = Math.max(180,depth(root)*95+35);
+  const positions = [];
+  function place(node, level) {
+    const x = 30 + node.x * ((width-60)/Math.max(1,leaves.length-1));
+    const y = 38 + level*90;
+    positions.push({node,x,y});
+    if(node.left) place(node.left,level+1);
+    if(node.right) place(node.right,level+1);
+  }
+  place(root,0);
+  let lines = "";
+  for (const p of positions) {
+    for (const child of [p.node.left,p.node.right]) {
+      if(child) {
+        const q=positions.find(item=>item.node===child);
+        lines += `<line x1="${p.x}" y1="${p.y+19}" x2="${q.x}" y2="${q.y-19}" stroke="#7893aa" stroke-width="2"/>`;
+      }
+    }
+  }
+  let nodes = positions.map(p=>`
+    <circle cx="${p.x}" cy="${p.y}" r="21" fill="#1769aa"/>
+    <text x="${p.x}" y="${p.y+5}" text-anchor="middle" font-size="13" font-weight="bold" fill="white">${escapeHTML(p.node.value)}</text>
+  `).join("");
+  $("tree").classList.remove("empty");
+  $("tree").innerHTML=`<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" role="img" aria-label="Expression tree">${lines}${nodes}</svg>`;
+}
+
+function run() {
+  $("message").innerHTML = "";
+  $("answer").innerHTML = "";
+  try {
+    const tokens = tokenize($("expression").value);
+    const conversion = convert(tokens);
+    const evaluation = evaluate(conversion.postfix);
+    const tree = buildTree(conversion.postfix);
+
+    renderPills("queue",tokens);
+    renderPills("opstack",conversion.finalStack);
+    renderPills("postfix",conversion.postfix);
+    renderPills("evalStack",evaluation.finalStack.map(formatNumber));
+
+    $("conversionRows").innerHTML = conversion.steps.map((s,i)=>`
+      <tr><td>${i+1}</td><td>${escapeHTML(s.token)}</td>
+      <td>${escapeHTML(show(s.queue))}</td><td>${escapeHTML(show(s.stack))}</td>
+      <td>${escapeHTML(show(s.output))}</td><td>${escapeHTML(s.action)}</td></tr>
+    `).join("") || '<tr><td colspan="6">No steps.</td></tr>';
+
+    $("evaluationRows").innerHTML = evaluation.steps.map((s,i)=>`
+      <tr><td>${i+1}</td><td>${escapeHTML(s.token)}</td>
+      <td>${escapeHTML(show(s.stack.map(formatNumber)))}</td>
+      <td>${escapeHTML(s.action)}</td></tr>
+    `).join("");
+
+    $("answer").innerHTML = `<div class="result"><strong>Final Answer</strong><div class="answer">${formatNumber(evaluation.value)}</div><div class="hint">Postfix: ${escapeHTML(show(conversion.postfix))}</div></div>`;
+    renderTree(tree);
+  } catch(error) {
+    $("message").innerHTML = `<div class="error">${escapeHTML(error.message)}</div>`;
+  }
+}
+function formatNumber(n) {
+  if (Object.is(n,-0)) return "0";
+  return Number(n.toPrecision(12)).toString();
+}
+$("calculate").addEventListener("click",run);
+$("expression").addEventListener("keydown",e=>{if(e.key==="Enter")run();});
+$("examples").addEventListener("change",e=>{
+  if(e.target.value) { $("expression").value=e.target.value; run(); }
+});
+$("reset").addEventListener("click",()=>{
+  $("expression").value=""; $("examples").value="";
+  $("message").innerHTML=""; $("answer").innerHTML="";
+  $("conversionRows").innerHTML='<tr><td colspan="6">No conversion yet.</td></tr>';
+  $("evaluationRows").innerHTML='<tr><td colspan="4">No evaluation yet.</td></tr>';
+  for(const id of ["queue","opstack","postfix","evalStack","tree"]) {
+    $(id).innerHTML="Results will appear here.";
+    $(id).classList.add("empty");
+  }
+  $("expression").focus();
+});
+</script>
+</body>
+</html>
